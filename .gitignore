@@ -1,0 +1,6 @@
+*.mov
+*.docx
+
+outputs/
+checkpoints/
+__pycache__/
