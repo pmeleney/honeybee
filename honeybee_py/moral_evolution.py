@@ -767,7 +767,7 @@ def choose_output(chosen_output):
     else:
         print('regular_outputs')
 
-def run(moral_config):
+def run(moral_config, viz=True):
     """
     Run the moral evolution experiment.
     
@@ -800,7 +800,7 @@ def run(moral_config):
             moral_net = networks[net_id][0]
             print('Now playing Game: ', net_id)
             game = Game()
-            queen_alive, max_score = play_game(game, moral_net, regular_network, hornet_network, viz=True)
+            queen_alive, max_score = play_game(game, moral_net, regular_network, hornet_network, viz=viz)
             max_scores[net_id] = max_score
             networks[net_id] = [moral_net, queen_alive, max_score]
             max_id = net_id
@@ -940,7 +940,7 @@ def test(config, inputs, net):
     return None
 
 
-def demo(moral_net):
+def demo(moral_net, viz=True):
     """
     Run a demonstration of the moral network.
     
@@ -950,8 +950,9 @@ def demo(moral_net):
     game = Game()
     regular_network = tf.keras.models.load_model(os.path.join('keras_models', 'regular_model.keras'))
     hornet_network = tf.keras.models.load_model(os.path.join('keras_models', 'hornet_model.keras'))
-    play_game(game, moral_net, regular_network, hornet_network, viz=True)
-    return None
+    queen_alive, score = play_game(game, moral_net, regular_network, hornet_network, viz=viz)
+    print({'queen_alive': queen_alive, 'score': score})
+    return queen_alive, score
 
 def check_outputs(regular_config):
     """

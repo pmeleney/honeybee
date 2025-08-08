@@ -56,11 +56,14 @@ Notes for Apple Silicon (M-series):
 
 ## Quickstart
 
-Run a visual game using the included pretrained regular/hornet models and a freshly initialized moral net.
-
+### Local (visual)
 ```bash
-cd honeybee_py
-python -c "from moral_evolution import Config, Network, demo; import os; c=Config(os.path.join('config_files','morality_layer_config.json')); demo(Network(c))"
+python -m honeybee_py demo
+```
+
+### Server/EC2 (headless, optional IP arg)
+```bash
+python -m honeybee_py demo 203.0.113.10 --headless
 ```
 
 What you’ll see:
@@ -80,8 +83,7 @@ python train_bee_hornet_networks.py
 ### 2) Evolve the moral layer
 Runs repeated games, prunes poor performers, mutates survivors, and continues until the desired count of “alive” networks is reached.
 ```bash
-cd honeybee_py
-python moral_evolution.py
+python -m honeybee_py evolve --headless
 ```
 Outputs are printed to console; pretrained regular/hornet models are loaded from `keras_models/`.
 
