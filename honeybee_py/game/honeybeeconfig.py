@@ -22,12 +22,12 @@ class GameState:
 
     #Flower Vars
     NUM_FLOWERS = 50
-    FLOWER_REFRESH_TURNS = None
+    FLOWER_REFRESH_TURNS = 100
     BLANK_MOAT = (1,1)
     BLANK_RIM = 2
 
     #Bee Vars
-    NUM_STARTING_BEES = 1
+    NUM_STARTING_BEES = 3
 
     #Hornet Vars
     HORNETS_EXIST = True

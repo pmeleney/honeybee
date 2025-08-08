@@ -229,6 +229,13 @@ class Game:
         game_board = 100*np.ones([self.game_state.NUM_GRID[0], self.game_state.NUM_GRID[1], 3]) #Init to light gray color
         game_board = self.place_queen(game_board)
         game_board = self.place_bees(game_board)
+        # Regenerate flowers every FLOWER_REFRESH_TURNS if configured
+        if (
+            getattr(self.game_state, 'FLOWER_REFRESH_TURNS', None) is not None
+            and self.game_vars.turn_num > 0
+            and (self.game_vars.turn_num % self.game_state.FLOWER_REFRESH_TURNS) == 0
+        ):
+            self.flowers = self.init_flowers(self.game_state.NUM_FLOWERS)
         game_board = self.place_flowers(game_board)
         if self.game_state.HORNETS_EXIST:
             if np.logical_not(self.hornet_exists):

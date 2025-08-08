@@ -6,6 +6,8 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
+import datetime
+import uuid
 
 def move_towards(x1, y1, x2, y2):
     """
@@ -200,10 +202,22 @@ def get_wb(num_inputs, epochs, board_size=20, sample_size=100000):
         print(len(layer.get_weights()))
         print(layer.get_weights())
 
+    # Create a run-specific subdirectory with timestamp and short id
+    os.makedirs('best_weights_and_biases', exist_ok=True)
+    run_tag = datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_' + uuid.uuid4().hex[:8]
+    run_dir = os.path.join('best_weights_and_biases', f'run_{run_tag}')
+    os.makedirs(run_dir, exist_ok=True)
+
     for i, layer in enumerate(model.layers):
         if len(layer.get_weights())>0:
-            np.savetxt(os.path.join('best_weights_and_biases', f'Best_weights_model_{model_type}_layer_{i}.csv'), layer.get_weights()[0], delimiter = ',')
-            np.savetxt(os.path.join('best_weights_and_biases', f'Best_biases_model_{model_type}_layer_{i}.csv'), layer.get_weights()[1], delimiter = ',')
+            w = layer.get_weights()[0]
+            b = layer.get_weights()[1]
+            # Save into run-specific directory
+            np.savetxt(os.path.join(run_dir, f'Best_weights_model_{model_type}_layer_{i}.csv'), w, delimiter = ',')
+            np.savetxt(os.path.join(run_dir, f'Best_biases_model_{model_type}_layer_{i}.csv'), b, delimiter = ',')
+            # And also update root files for backward compatibility
+            np.savetxt(os.path.join('best_weights_and_biases', f'Best_weights_model_{model_type}_layer_{i}.csv'), w, delimiter = ',')
+            np.savetxt(os.path.join('best_weights_and_biases', f'Best_biases_model_{model_type}_layer_{i}.csv'), b, delimiter = ',')
 
         #model.save(os.path.join('keras_models', f'{model_type}_model.keras'))
 
