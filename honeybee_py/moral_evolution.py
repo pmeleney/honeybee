@@ -1,6 +1,6 @@
 import numpy as np
 rng = np.random.default_rng()
-from game.game import Game, play_game
+from .game.game import Game, play_game
 import json
 import os
 from scipy.spatial import distance
@@ -19,7 +19,7 @@ def write_se_config():
     Creates three JSON configuration files:
     - morality_layer_config.json: Configuration for the moral decision network
     - regular_network_config.json: Configuration for the regular behavior network
-    - hornet_network_config.json: Configuration for the hornet avoidance network
+    - hornet_network_config.json: Configuration for the hornet confrontation network
     """
     morality_layer_config = {
         # Run Attributes
@@ -948,8 +948,8 @@ def demo(moral_net):
         moral_net (Network): Moral network to demonstrate
     """
     game = Game()
-    regular_network = tf.keras.models.load_model('regular_model.keras')
-    hornet_network = tf.keras.models.load_model('hornet_model.keras')
+    regular_network = tf.keras.models.load_model(os.path.join('keras_models', 'regular_model.keras'))
+    hornet_network = tf.keras.models.load_model(os.path.join('keras_models', 'hornet_model.keras'))
     play_game(game, moral_net, regular_network, hornet_network, viz=True)
     return None
 

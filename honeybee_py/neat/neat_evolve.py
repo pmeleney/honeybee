@@ -9,7 +9,7 @@ import neat
 import numpy as np
 import matplotlib.pyplot as plt
 
-from game.game import Game, play_game
+from ..game.game import Game, play_game
 
 def eval_genomes(genome, config):
     """

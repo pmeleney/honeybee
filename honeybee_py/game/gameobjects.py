@@ -1,7 +1,7 @@
 import numpy as np
 
-from game.helpers import _fill_rect, _flatten_list, _distance
-from game.honeybeeconfig import GameState, GameVars
+from .helpers import _fill_rect, _flatten_list, _distance
+from .honeybeeconfig import GameState, GameVars
 
 
 game_state = GameState()

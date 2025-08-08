@@ -4,7 +4,7 @@ import pickle
 
 import neat
 
-from game.game import Game, play_game
+from .game.game import Game, play_game
 
 def demo(winner_path, config_path):
     """

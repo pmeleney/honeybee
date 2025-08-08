@@ -6,9 +6,9 @@ import numpy as np
 from matplotlib import pyplot as plt
 from tensorflow import keras
 from scipy.spatial.distance import cosine
-from game.gameobjects import Queen, Bee, Flower, Hornet
-from game.honeybeeconfig import GameVars, GameState
-from game.helpers import _flatten_list, _fill_rect
+from .gameobjects import Queen, Bee, Flower, Hornet
+from .honeybeeconfig import GameVars, GameState
+from .helpers import _flatten_list, _fill_rect
 
 import itertools
 class Game:
@@ -262,7 +262,8 @@ class Game:
             regular_outputs = regular_net.predict(regular_network_inputs, verbose=False)
             hornet_outputs = hornet_net.predict(hornet_network_inputs, verbose=False)
             moral_output = moral_net.run_once(self.hornet_exists)
-            if moral_output > 0.5:
+            moral_decision = float(np.squeeze(moral_output))
+            if moral_decision > 0.5:
                 bee.position = self.net_move(bee, hornet_outputs)
             else:
                 bee.position = self.net_move(bee, regular_outputs)
