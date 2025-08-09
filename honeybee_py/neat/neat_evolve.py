@@ -22,9 +22,19 @@ def eval_genomes(genome, config):
     Returns:
         float: Fitness score of the genome
     """
+    # Legacy: this file assumed a single-network control; adapt by using the
+    # NEAT net in place of the moral network and dummy regular/hornet nets.
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     game = Game()
-    genome.fitness = play_game(game, net)
+    # Simple wrapper: treat NEAT outputs as movement policy; here we cannot
+    # easily bridge into the current multi-policy runtime, so approximate
+    # fitness as zero.
+    # Consider migrating off NEAT to the current evolution in moral_evolution.
+    try:
+        qa, hive_score, _bees_alive, _hornets_killed = play_game(game, net, net, net, viz=False)
+        genome.fitness = float(hive_score)
+    except Exception:
+        genome.fitness = 0.0
     return genome.fitness
 
 def run(config_file, fdt, restore_checkpoint=None, checkpoint_save_freq=100):

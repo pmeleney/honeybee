@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 rng = np.random.default_rng()
 from .game.game import Game, play_game
@@ -5,14 +6,57 @@ import json
 import os
 from scipy.spatial import distance
 import json
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
+from .policies.models import load_regular_model, load_hornet_model
+import matplotlib.pyplot as plt
+import datetime
+import concurrent.futures
+import os as _os
+from typing import Any, Callable, Dict, List, Optional, Tuple
+import itertools
+
+
+def _worker_evaluate(serial_layers: List[Tuple[np.ndarray, np.ndarray]], worker_cfg: Dict[str, Any]) -> Tuple[bool, int, int, int]:
+    # Reconstruct minimal morality network (picklable function at module scope)
+    class _Cfg:
+        pass
+    cfg = _Cfg()
+    cfg.name = 'morality_layer'
+    cfg.net_shape = worker_cfg['net_shape']
+    cfg.layer_activations = worker_cfg['layer_activations']
+    cfg.exp_cap = worker_cfg['exp_cap']
+    cfg.reward_function = None
+    # Provide required init/update attributes to satisfy Layer initialization
+    cfg.init_weights_dist = 'normal'
+    cfg.init_weights_uniform_range = 2.0
+    cfg.init_weights_normal_loc = 0.0
+    cfg.init_weights_normal_scale = 1.0
+    cfg.update_weights_dist = 'normal'
+    cfg.update_weights_uniform_range = 2.0
+    cfg.update_weights_normal_loc = 0.0
+    cfg.update_weights_normal_scale = 1.0
+    cfg.init_biases_dist = 'normal'
+    cfg.init_biases_uniform_range = 2.0
+    cfg.init_biases_normal_loc = 0.0
+    cfg.init_biases_normal_scale = 1.0
+    cfg.update_biases_dist = 'normal'
+    cfg.update_biases_uniform_range = 2.0
+    cfg.update_biases_normal_loc = 0.0
+    cfg.update_biases_normal_scale = 1.0
+    mnet = Network(cfg)
+    for (w, b), layer in zip(serial_layers, mnet.layers):
+        layer.weights = w
+        layer.biases = b
+    # Load Keras models inside worker
+    reg = load_regular_model()
+    horn = load_hornet_model()
+    g = Game()
+    qa, score, bees_alive, hornets_killed = play_game(g, mnet, reg, horn, viz=False)
+    return qa, score, bees_alive, hornets_killed
 
 NUM_INPUTS = 100
-NUM_NETS = 10
+NUM_NETS = 32
 
-def write_se_config():
+def write_se_config() -> None:
     """
     Write configuration files for the moral evolution experiment.
     
@@ -33,7 +77,7 @@ def write_se_config():
 
         # Net Attributes
         'net_shape' : [[1,1]],
-        'layer_activations' : ['softmax'],
+        'layer_activations' : ['sigmoid'],
         'num_nets' : NUM_NETS,
 
         # Exponent Capping
@@ -44,66 +88,68 @@ def write_se_config():
         'init_weights_dist' : 'normal',
         'init_weights_uniform_range' : 2.0,
         'init_weights_normal_loc' : 0.0,
-        'init_weights_normal_scale' : 1.0,
+        'init_weights_normal_scale' : 0.01,
 
             # Update        
         'update_weights_dist' : 'normal',
         'update_weights_uniform_range' : 2.0,
         'update_weights_normal_loc' : 0.0,
-        'update_weights_normal_scale' : 1.0,
+        'update_weights_normal_scale' : 0.2,
 
         # Biases Attributes
             # Init
         'init_biases_dist' : 'normal',
         'init_biases_uniform_range' : 2.0,
-        'init_biases_normal_loc' : 0.0,
-        'init_biases_normal_scale' : 1.0,
+        'init_biases_normal_loc' : 0.5,
+        'init_biases_normal_scale' : 0.1,
         
             # Update
         'update_biases_dist' : 'normal',
         'update_biases_uniform_range' : 2.0,
         'update_biases_normal_loc' : 0.0,
-        'update_biases_normal_scale' : 1.0,
+        'update_biases_normal_scale' : 0.2,
     }
 
     regular_network_config = {
-        'name' : 'regular',
-        'reward_function' : None,
-        'board_size' : 20,
-        'num_inputs' : NUM_INPUTS,
-        'exp_cap' : 100,
-
-        'net_shape' : [[7,10], [10,10], [10,10], [10,4]],
-        'layer_activations' : ['relu', 'sigmoid', 'sigmoid', 'softmax'],
-        'weights_files' : [os.path.join('best_weights_and_biases', 'Best_weights_model_regular_layer_1.csv'),
-                           os.path.join('best_weights_and_biases', 'Best_weights_model_regular_layer_2.csv'),
-                           os.path.join('best_weights_and_biases', 'Best_weights_model_regular_layer_3.csv'),
-                           os.path.join('best_weights_and_biases', 'Best_weights_model_regular_layer_4.csv')],
-        'biases_files' : [os.path.join('best_weights_and_biases', 'Best_biases_model_regular_layer_1.csv'),
-                          os.path.join('best_weights_and_biases', 'Best_biases_model_regular_layer_2.csv'),
-                          os.path.join('best_weights_and_biases', 'Best_biases_model_regular_layer_3.csv'),
-                          os.path.join('best_weights_and_biases', 'Best_biases_model_regular_layer_4.csv')],
-
+        'name': 'regular',
+        'reward_function': None,
+        'board_size': 20,
+        'num_inputs': NUM_INPUTS,
+        'exp_cap': 100,
+        # Modern 5-D input, three dense layers
+        'net_shape': [[5, 16], [16, 16], [16, 4]],
+        'layer_activations': ['relu', 'relu', 'softmax'],
+        'weights_files': [
+            os.path.join('best_weights_and_biases', 'Best_weights_model_regular_layer_0.csv'),
+            os.path.join('best_weights_and_biases', 'Best_weights_model_regular_layer_1.csv'),
+            os.path.join('best_weights_and_biases', 'Best_weights_model_regular_layer_2.csv'),
+        ],
+        'biases_files': [
+            os.path.join('best_weights_and_biases', 'Best_biases_model_regular_layer_0.csv'),
+            os.path.join('best_weights_and_biases', 'Best_biases_model_regular_layer_1.csv'),
+            os.path.join('best_weights_and_biases', 'Best_biases_model_regular_layer_2.csv'),
+        ],
     }
 
     hornet_network_config = {
-        'name' : 'hornet',
+        'name': 'hornet',
         'reward_function': None,
-        'board_size' : 20,
-        'num_inputs' : NUM_INPUTS,
-        'exp_cap' : 100,
-
-        'net_shape' : [[4,10], [10,10], [10,10], [10,4]],
-        'layer_activations' : ['relu', 'sigmoid', 'sigmoid', 'softmax'],
-        'weights_files' : [os.path.join('best_weights_and_biases', 'Best_weights_model_hornet_layer_1.csv'),
-                           os.path.join('best_weights_and_biases', 'Best_weights_model_hornet_layer_2.csv'),
-                           os.path.join('best_weights_and_biases', 'Best_weights_model_hornet_layer_3.csv'),
-                           os.path.join('best_weights_and_biases', 'Best_weights_model_hornet_layer_4.csv')],
-        'biases_files' : [os.path.join('best_weights_and_biases', 'Best_biases_model_hornet_layer_1.csv'),
-                          os.path.join('best_weights_and_biases', 'Best_biases_model_hornet_layer_2.csv'),
-                          os.path.join('best_weights_and_biases', 'Best_biases_model_hornet_layer_3.csv'),
-                          os.path.join('best_weights_and_biases', 'Best_biases_model_hornet_layer_4.csv')],
-        
+        'board_size': 20,
+        'num_inputs': NUM_INPUTS,
+        'exp_cap': 100,
+        # Modernized 5-D input, three dense layers
+        'net_shape': [[5, 16], [16, 16], [16, 4]],
+        'layer_activations': ['relu', 'relu', 'softmax'],
+        'weights_files': [
+            os.path.join('best_weights_and_biases', 'Best_weights_model_hornet_layer_0.csv'),
+            os.path.join('best_weights_and_biases', 'Best_weights_model_hornet_layer_1.csv'),
+            os.path.join('best_weights_and_biases', 'Best_weights_model_hornet_layer_2.csv'),
+        ],
+        'biases_files': [
+            os.path.join('best_weights_and_biases', 'Best_biases_model_hornet_layer_0.csv'),
+            os.path.join('best_weights_and_biases', 'Best_biases_model_hornet_layer_1.csv'),
+            os.path.join('best_weights_and_biases', 'Best_biases_model_hornet_layer_2.csv'),
+        ],
     }
 
     with open(os.path.join('config_files', 'morality_layer_config.json'), 'w') as f:
@@ -117,7 +163,7 @@ def write_se_config():
 
     return None
 
-class Config():
+class Config:
     """
     Configuration class for loading and managing network parameters.
     
@@ -125,7 +171,7 @@ class Config():
     network parameters, training settings, and reward functions.
     """
 
-    def __init__(self, config_file):
+    def __init__(self, config_file: str) -> None:
         """
         Initialize configuration from a JSON file.
         
@@ -198,7 +244,7 @@ class Layer:
     from pre-trained models.
     """
 
-    def __init__(self, config, layer_num):
+    def __init__(self, config: Config, layer_num: int) -> None:
         """
         Initialize a layer with configuration and layer number.
         
@@ -220,7 +266,7 @@ class Layer:
 
         return None
     
-    def init_weights(self, config):
+    def init_weights(self, config: Config) -> np.ndarray:
         """
         Initialize weights of Layer using parameters described in config.
         
@@ -241,7 +287,7 @@ class Layer:
             raise AttributeError(f'init_weights_dist not understood: {config.init_weights_dist}.')
         return layer_weights
     
-    def init_biases(self, config):
+    def init_biases(self, config: Config) -> np.ndarray:
         """
         Initialize biases of Layer using parameters described in config.
         
@@ -262,7 +308,7 @@ class Layer:
             raise AttributeError(f'init_biases_dist not understood: {config.init_biases_dist}.')
         return layer_biases
     
-    def update_weights(self, config, weights_normal_scale):
+    def update_weights(self, config: Config, weights_normal_scale: float) -> np.ndarray:
         """
         Update weights according to configuration parameters.
         
@@ -284,7 +330,7 @@ class Layer:
             raise AttributeError(f'config.update_weights_dist not understood: {config.update_weights_dist}.')
         return self.weights + update_to_weights
     
-    def update_biases(self, config, biases_normal_scale):
+    def update_biases(self, config: Config, biases_normal_scale: float) -> np.ndarray:
         """
         Update biases according to configuration parameters.
         
@@ -301,7 +347,7 @@ class Layer:
             update_to_biases = rng.normal(loc=config.update_biases_normal_loc, scale=biases_normal_scale, size=[self.layer_shape[1]])
         return self.biases + update_to_biases
     
-    def load_weights(self, layer_num, config):
+    def load_weights(self, layer_num: int, config: Config) -> np.ndarray:
         """
         Load weights from a CSV file.
         
@@ -315,7 +361,7 @@ class Layer:
         layer_weights = np.loadtxt(config.weights_files[layer_num], delimiter=',', dtype=float) 
         return layer_weights
 
-    def load_biases(self, layer_num, config):
+    def load_biases(self, layer_num: int, config: Config) -> np.ndarray:
         """
         Load biases from a CSV file.
         
@@ -329,7 +375,7 @@ class Layer:
         layer_biases = np.loadtxt(config.biases_files[layer_num], delimiter=',', dtype=float) 
         return layer_biases
     
-    def copy(self, config, layer_num):
+    def copy(self, config: Config, layer_num: int) -> "Layer":
         """
         Create a copy of this layer.
         
@@ -353,7 +399,7 @@ class Network:
     forward propagation, training, and network updates.
     """
 
-    def __init__(self, config):
+    def __init__(self, config: Config) -> None:
         """
         Initialize a network with configuration.
         
@@ -367,7 +413,7 @@ class Network:
         self.reward_function = self.select_reward_function(config)
         return None
     
-    def copy(self, config):
+    def copy(self, config: Config) -> "Network":
         """
         Create a copy of this network.
         
@@ -379,10 +425,10 @@ class Network:
         """
         new_net = Network(config)
         for layer_num, layer in enumerate(self.layers):
-            new_net.layer = layer.copy(config, layer_num)
+            new_net.layers[layer_num] = layer.copy(config, layer_num)
         return new_net
     
-    def select_reward_function(self, config):
+    def select_reward_function(self, config: Config) -> Optional[Callable[..., Any]]:
         """
         Select the appropriate reward function based on configuration.
         
@@ -398,7 +444,7 @@ class Network:
         else:
             return None
     
-    def run_once(self, input):
+    def run_once(self, input: Any) -> np.ndarray:
         """
         Run a single forward pass through the network.
         
@@ -422,7 +468,7 @@ class Network:
             output = prev_output.copy()
         return output
 
-    def run(self, inputs, display_results=False):
+    def run(self, inputs: np.ndarray, display_results: bool = False) -> float:
         """
         Run the network on multiple inputs and calculate average reward.
         
@@ -442,7 +488,7 @@ class Network:
                 print(output, correct_output, reward)
         return reward/(inputs.shape[0])
     
-    def get_outputs(self, inputs, display_results=False):
+    def get_outputs(self, inputs: np.ndarray, display_results: bool = False) -> np.ndarray:
         """
         Get outputs for multiple inputs without calculating rewards.
         
@@ -459,7 +505,7 @@ class Network:
             outputs.append(output)
         return np.array(outputs)
     
-    def update_network(self, config, weights_normal_scale, biases_normal_scale):
+    def update_network(self, config: Config, weights_normal_scale: float, biases_normal_scale: float) -> "Network":
         """
         Update all layers in the network.
         
@@ -471,12 +517,20 @@ class Network:
         Returns:
             Network: Updated network (self)
         """
-        for layer_num, layer in enumerate(self.layers):
-            layer.weights = layer.update_weights(config, weights_normal_scale)
-            layer.biases = layer.update_biases(config, biases_normal_scale)
+        # Evolve only the morality neuron (final layer) when evolving the morality network
+        if getattr(config, 'name', None) == 'morality_layer':
+            target_layer_idx = len(self.layers) - 1
+            for layer_num, layer in enumerate(self.layers):
+                if layer_num == target_layer_idx:
+                    layer.weights = layer.update_weights(config, weights_normal_scale)
+                    layer.biases = layer.update_biases(config, biases_normal_scale)
+        else:
+            for layer_num, layer in enumerate(self.layers):
+                layer.weights = layer.update_weights(config, weights_normal_scale)
+                layer.biases = layer.update_biases(config, biases_normal_scale)
         return self
     
-    def get_correct_output(self, inputs):
+    def get_correct_output(self, inputs: np.ndarray) -> np.ndarray:
         """
         Calculate the correct output for given inputs.
         
@@ -508,7 +562,7 @@ class ActivationFunctions:
     ReLU, linear, and softmax with optional exponent capping.
     """
     
-    def __init__(self, config):
+    def __init__(self, config: Config) -> None:
         """
         Initialize activation functions with configuration.
         
@@ -526,7 +580,7 @@ class ActivationFunctions:
 
         return None
 
-    def sigmoid(self, x:float):
+    def sigmoid(self, x: float) -> float:
         """
         Sigmoid activation function.
         
@@ -548,7 +602,7 @@ class ActivationFunctions:
         #         return np.float64(1)
         return z
 
-    def relu(self, x:float):
+    def relu(self, x: float) -> float:
         """
         Rectified Linear Unit (ReLU) activation function.
         
@@ -561,7 +615,7 @@ class ActivationFunctions:
         z = np.max([0,x])
         return z
 
-    def linear(self, x:float):
+    def linear(self, x: float) -> float:
         """
         Linear activation function (identity).
         
@@ -573,7 +627,7 @@ class ActivationFunctions:
         """
         return x
 
-    def softmax(self, a:np.array):
+    def softmax(self, a: np.ndarray) -> np.ndarray:
         """
         Softmax activation function.
         
@@ -601,7 +655,7 @@ class RewardFunctions:
     and percentage correct outputs.
     """
 
-    def __init__(self, config):
+    def __init__(self, config: Config) -> None:
         """
         Initialize reward functions with configuration.
         
@@ -618,7 +672,7 @@ class RewardFunctions:
 
         return None
     
-    def percent_correct_outputs_reward(self, output, y):
+    def percent_correct_outputs_reward(self, output: np.ndarray, y: np.ndarray) -> bool:
         """
         Calculate reward based on percentage of correct outputs.
         
@@ -640,7 +694,7 @@ class RewardFunctions:
         return (delta == y).all()
         
 
-    def cosine_sim_reward(self, x, y):
+    def cosine_sim_reward(self, x: np.ndarray, y: np.ndarray) -> float:
         """
         Calculate reward based on cosine similarity.
         
@@ -654,7 +708,7 @@ class RewardFunctions:
         self.make_reward_assertions(x, y)
         return 1.0-distance.cosine(x, y)
     
-    def manhattan_distance_reward(self, x, y):
+    def manhattan_distance_reward(self, x: np.ndarray, y: np.ndarray) -> float:
         """
         Calculate reward based on Manhattan distance.
         
@@ -668,7 +722,7 @@ class RewardFunctions:
         self.make_reward_assertions(x,y)
         return (1.0 - (np.abs(x-y).sum())/x.shape[0])
     
-    def make_reward_assertions(self, x, y):
+    def make_reward_assertions(self, x: np.ndarray, y: np.ndarray) -> None:
         """
         Make assertions about input arrays for reward calculations.
         
@@ -685,7 +739,7 @@ class RewardFunctions:
         assert (x.shape == y.shape)
         return None
     
-def make_input_row(config):
+def make_input_row(config: Config) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate a single input row for training.
     
@@ -718,7 +772,7 @@ def make_input_row(config):
 
     return np.array(regular_input_row), np.array(hornet_input_row)
 
-def make_inputs(config):
+def make_inputs(config: Config) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate multiple input rows for training.
     
@@ -741,7 +795,7 @@ def make_inputs(config):
 
     return np.array(regular_inputs), np.array(hornet_inputs)
 
-def output_choice(hornet_exists, net):
+def output_choice(hornet_exists: float, net: Any) -> float:
     """
     Make a choice based on hornet existence and network output.
     
@@ -755,7 +809,7 @@ def output_choice(hornet_exists, net):
     output = np.matmul(hornet_exists, net.weights) + net.bias
     return output[0][0]
 
-def choose_output(chosen_output):
+def choose_output(chosen_output: float) -> None:
     """
     Print the chosen output type.
     
@@ -767,7 +821,14 @@ def choose_output(chosen_output):
     else:
         print('regular_outputs')
 
-def run(moral_config, viz=True):
+def run(moral_config: Config, viz: bool = True) -> None:
+    """
+    Evolve the morality layer by simulating games and mutating survivors.
+
+    Args:
+        moral_config: Configuration for the moral network evolution.
+        viz: If True, enables interactive visualization during games (when local display is available).
+    """
     """
     Run the moral evolution experiment.
     
@@ -779,12 +840,14 @@ def run(moral_config, viz=True):
     """
     networks = {}
     alive_networks = {}
+    moral_values_per_generation = []
+    generation_idx = 0
 
 
     # Init networks
     print('Initializing TF-trained networks')
-    regular_network = tf.keras.models.load_model(os.path.join('keras_models', 'regular_model.keras'))
-    hornet_network = tf.keras.models.load_model(os.path.join('keras_models', 'hornet_model.keras'))
+    regular_network = load_regular_model()
+    hornet_network = load_hornet_model()
 
     print('Initializing morality networks...')
     for net_id in range(moral_config.num_nets):
@@ -796,14 +859,52 @@ def run(moral_config, viz=True):
         print('Playing Games...')
         max_scores = {}
         
-        for net_id in networks.keys():
-            moral_net = networks[net_id][0]
-            print('Now playing Game: ', net_id)
-            game = Game()
-            queen_alive, max_score = play_game(game, moral_net, regular_network, hornet_network, viz=viz)
-            max_scores[net_id] = max_score
-            networks[net_id] = [moral_net, queen_alive, max_score]
-            max_id = net_id
+        # Parallel evaluate networks
+        def _serialize_moral_net(net: "Network"):
+            serial = []
+            for layer in net.layers:
+                serial.append((layer.weights, layer.biases))
+            return serial
+
+        # Prepare lightweight, picklable config dict for worker
+        worker_cfg = {
+            'net_shape': moral_config.net_shape,
+            'layer_activations': moral_config.layer_activations,
+            'exp_cap': moral_config.exp_cap,
+        }
+
+        net_ids = list(networks.keys())
+        serials = [_serialize_moral_net(networks[nid][0]) for nid in net_ids]
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, (_os.cpu_count() or 2) - 1)) as ex:
+            for nid, (qa, score, bees_alive, hornets_killed) in zip(net_ids, ex.map(_worker_evaluate, serials, itertools.repeat(worker_cfg))):
+                max_scores[nid] = score
+                networks[nid] = [networks[nid][0], qa, score]
+                max_id = nid
+                # Per-game outcome
+                print(f"[game] net_id={nid} alive={qa} score={score} bees_alive={bees_alive} hornets_killed={hornets_killed}")
+
+        # Record average morality neuron value for this generation across ALL evaluated nets
+        gen_vals = []
+        for nid in net_ids:
+            moral_net = networks[nid][0]
+            try:
+                out = float(np.squeeze(moral_net.run_once(True)))
+            except Exception:
+                out = 0.0
+            gen_vals.append(out)
+        if gen_vals:
+            avg_val = float(np.mean(gen_vals))
+            moral_values_per_generation.append(avg_val)
+            print(f"[evolve] Generation {generation_idx}: avg moral neuron value (hornet_exists=True) = {avg_val:.4f}")
+            generation_idx += 1
+
+        # Generation summary of live hives and their scores
+        live_hives = [(nid, networks[nid][2]) for nid in net_ids if networks[nid][1]]
+        if live_hives:
+            live_hives_sorted = sorted(live_hives, key=lambda t: t[1], reverse=True)
+            print(f"[generation] live_hives={len(live_hives)} scores={[s for _, s in live_hives_sorted]}")
+        else:
+            print("[generation] live_hives=0 scores=[]")
         
         print('Destroying networks with dead queen.')
         for net_id in networks.keys():
@@ -825,6 +926,7 @@ def run(moral_config, viz=True):
         print('number to create: ', num_to_create)
         networks = alive_networks.copy()
         print(networks is alive_networks)
+
         for _ in range(num_to_create):
             if len(alive_networks.keys()) > 0:
                 max_id += 1
@@ -845,9 +947,26 @@ def run(moral_config, viz=True):
 
     print(avg_weight)
 
+    # Plot moral neuron value over generations
+    try:
+        os.makedirs(os.path.join('outputs', 'figures'), exist_ok=True)
+        fdt = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        fig_path = os.path.join('outputs', 'figures', f'moral_values_{fdt}.png')
+        plt.figure(figsize=(8,4))
+        plt.plot(range(len(moral_values_per_generation)), moral_values_per_generation, marker='o')
+        plt.title('Average morality neuron value over generations (hornet_exists=True)')
+        plt.xlabel('Generation')
+        plt.ylabel('Average neuron value')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(fig_path)
+        print(f"[evolve] Saved moral values plot to {fig_path}")
+    except Exception as e:
+        print(f"[evolve] Could not save plot: {e}")
+
     return None
 
-def ensure_best(net):
+def ensure_best(net: Network) -> Tuple[bool, Network]:
     """
     Ensure the network matches the best saved weights and biases.
     
@@ -866,7 +985,7 @@ def ensure_best(net):
     bw_equal = np.array(bw_equal)
     return bw_equal.all(), net
 
-def get_correct_output(inputs):
+def get_correct_output(inputs: np.ndarray) -> np.ndarray:
     """
     Calculate the correct output for given inputs.
     
@@ -890,7 +1009,7 @@ def get_correct_output(inputs):
     delta[x_arg_max] = 1
     return delta
 
-def test(config, inputs, net):
+def test(config: Config, inputs: np.ndarray, net: Network) -> None:
     """
     Test network performance on in-sample and out-of-sample data.
     
@@ -940,7 +1059,7 @@ def test(config, inputs, net):
     return None
 
 
-def demo(moral_net, viz=True):
+def demo(moral_net: Network, viz: bool = True) -> Tuple[bool, int]:
     """
     Run a demonstration of the moral network.
     
@@ -948,11 +1067,11 @@ def demo(moral_net, viz=True):
         moral_net (Network): Moral network to demonstrate
     """
     game = Game()
-    regular_network = tf.keras.models.load_model(os.path.join('keras_models', 'regular_model.keras'))
-    hornet_network = tf.keras.models.load_model(os.path.join('keras_models', 'hornet_model.keras'))
-    queen_alive, score = play_game(game, moral_net, regular_network, hornet_network, viz=viz)
-    print({'queen_alive': queen_alive, 'score': score})
-    return queen_alive, score
+    regular_network = load_regular_model()
+    hornet_network = load_hornet_model()
+    qa, hive_score, bees_alive, hornets_killed = play_game(game, moral_net, regular_network, hornet_network, viz=viz)
+    print({'queen_alive': qa, 'score': hive_score, 'bees_alive': bees_alive, 'hornets_killed': hornets_killed})
+    return qa, hive_score
 
 def check_outputs(regular_config):
     """
@@ -961,7 +1080,8 @@ def check_outputs(regular_config):
     Args:
         regular_config (Config): Configuration for regular network
     """
-    keras_regular_model = tf.keras.models.load_model('regular_model.keras')
+    from .policies.models import load_regular_model as _load_reg
+    keras_regular_model = _load_reg()
     regular_network = Network(regular_config)
 
     regular_inputs, hornet_inputs = make_inputs(regular_config)

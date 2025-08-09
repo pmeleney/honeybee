@@ -75,17 +75,21 @@ class Bee(GameObject):
         Returns:
             Flower: The nearest flower with food, or None if no flowers have food
         """
-        flowers_with_food = [flower for flower in flowers if flower.has_food]
-        min_distance = 9999
-        for _, flower in enumerate(flowers_with_food):
-            flower.color = (7, 218, 99)
+        # Prefer flowers with food; if none, consider any flower; if none at all, return None
+        candidates = [f for f in flowers if f.has_food]
+        if not candidates:
+            candidates = list(flowers)
+        if not candidates:
+            return None
+        min_distance = float('inf')
+        nearest_flower = None
+        for flower in candidates:
             bee_pos = self.position
             flower_pos = flower.position
             flower_distance = _distance(bee_pos, flower_pos)
             if flower_distance < min_distance:
                 min_distance = flower_distance
                 nearest_flower = flower
-        nearest_flower.color = [255,255,255]
         return nearest_flower
 
     def get_food(self, flower):
@@ -155,7 +159,7 @@ class Flower(GameObject):
         self.nofood_color = (1,50,32)
         self.has_food = True
         self.position = position
-        self.food_taken_on = 0
+        self.food_taken_on = None
 
 class Hornet(GameObject):
     """

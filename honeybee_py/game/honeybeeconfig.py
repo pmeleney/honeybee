@@ -7,12 +7,12 @@ class GameState:
     and hornet behavior.
     """
     #Gameplay Vars
-    MAX_TURNS = 200
+    MAX_TURNS = 124
 
     #Gameboard Vars
     GAME_BOARD_SHAPE = 'square'
     if GAME_BOARD_SHAPE == 'square':
-        NUM_GRID = (20,20)
+        NUM_GRID = (30,30)
     else:
         raise AttributeError('GAME_BOARD_SHAPE must be square.')
     
@@ -21,33 +21,37 @@ class GameState:
     QUEEN_SIZE = (2,2)
 
     #Flower Vars
-    NUM_FLOWERS = 50
-    FLOWER_REFRESH_TURNS = 100
+    NUM_FLOWERS = 256
+    FLOWER_REFRESH_TURNS = 32
     BLANK_MOAT = (1,1)
     BLANK_RIM = 2
 
     #Bee Vars
-    NUM_STARTING_BEES = 3
+    NUM_STARTING_BEES = 2
 
     #Hornet Vars
     HORNETS_EXIST = True
     NUM_STARTING_HORNETS = 0
     HORNET_START_TRUNS = 0
-    HORNET_FREQUENCY = 30
+    HORNET_FREQUENCY = 25
     HORNET_RANDOM_ELE = 1
     
 
+from dataclasses import dataclass
+
+
+@dataclass
 class GameVars:
     """
     Dynamic game variables that change during gameplay.
     
-    This class tracks the current state of the game including scores,
-    turn numbers, and various counters that are updated as the game progresses.
+    Tracks cumulative reward, step index, turn number, hive stats, and events.
     """
-    reward = 0.0
-    index = 0
-    turn_num = 0
-    bees_generated = 0
-    food_collected = 0
-    hornet_created = False
-    queen_alive = True
+    reward: float = 0.0
+    index: int = 0
+    turn_num: int = 0
+    bees_generated: int = 0
+    food_collected: int = 0
+    hornet_created: bool = False
+    queen_alive: bool = True
+    hornets_killed: int = 0

@@ -73,11 +73,11 @@ What you’ll see:
 
 ## Training and Evolution
 
-### 1) Re-train or regenerate the control nets (optional)
+### 1) Train or regenerate the control nets (optional)
 Exports both `.keras` models and `best_weights_and_biases` CSVs.
 ```bash
-cd honeybee_py
-python train_bee_hornet_networks.py
+python -m honeybee_py train-regular
+python -m honeybee_py train-hornet
 ```
 
 ### 2) Evolve the moral layer
@@ -95,7 +95,7 @@ mkdir -p outputs/figures outputs/winners checkpoints
 python neat_evolve.py <path-to-neat-config>
 ```
 
-Legacy note: `honeybee_py/demonstration.py` was written for an older `play_game` signature (NEAT-only). It’s kept for reference but not wired to the current game API.
+Legacy note: The old `honeybee_py/train_bee_hornet_networks.py` and `honeybee_py/demonstration.py` have been removed in favor of CLI commands and the new game API.
 
 ## How It Works
 
