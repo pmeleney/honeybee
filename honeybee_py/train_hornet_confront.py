@@ -95,16 +95,7 @@ def train(epochs: int = 100, dataset_size: int = 200_000, batch_size: int = 1024
     model.save(out_path)
     print(f"[train] Saved hornet model to {out_path}")
 
-    # Save CSV weights for compatibility with config expectations (0..N-1 for param layers)
-    os.makedirs('best_weights_and_biases', exist_ok=True)
-    param_layer_idx = 0
-    for layer in model.layers:
-        params = layer.get_weights()
-        if len(params) == 2:
-            w, b = params
-            np.savetxt(os.path.join('best_weights_and_biases', f'Best_weights_model_hornet_layer_{param_layer_idx}.csv'), w, delimiter=',')
-            np.savetxt(os.path.join('best_weights_and_biases', f'Best_biases_model_hornet_layer_{param_layer_idx}.csv'), b, delimiter=',')
-            param_layer_idx += 1
+    # CSV export removed: keep only the Keras model
 
     return model
 

@@ -13,6 +13,7 @@ from .helpers import _flatten_list, _fill_rect
 
 import itertools
 from typing import List, Tuple, Dict, Optional
+from collections import deque
 
 
 class Game:
@@ -37,6 +38,7 @@ class Game:
         self.hornet_exists = False
         self.game_board = self.update_game_board()
         self.bee_moves = {}
+        self.bee_pos_history: Dict[int, deque] = {}
         self.hornet_moves = {}
         self.queen_alive = True
         
@@ -235,11 +237,14 @@ class Game:
         """
         Update the gameboard with the new positions of all elements.
         """
-        game_board = 100*np.ones([self.game_state.NUM_GRID[0], self.game_state.NUM_GRID[1], 3]) #Init to light gray color
+        # Initialize as (height, width, 3) so indexing [y, x, :] is correct
+        # Use uint8 to avoid per-frame dtype conversions during visualization
+        game_board = np.full([self.game_state.NUM_GRID[1], self.game_state.NUM_GRID[0], 3], 100, dtype=np.uint8)
+        # Draw order: queen, flowers, bees, hornets so flowers are visible under bees
         game_board = self.place_queen(game_board)
-        game_board = self.place_bees(game_board)
         # Per-flower regeneration handled in place_flowers
         game_board = self.place_flowers(game_board)
+        game_board = self.place_bees(game_board)
         if self.game_state.HORNETS_EXIST:
             if np.logical_not(self.hornet_exists):
                 self.hornets = self.init_hornets(self.game_state.NUM_STARTING_HORNETS)
@@ -265,7 +270,9 @@ class Game:
         input_indices = []
         index_to_flower = {}
         regular_inputs = []
-        hornet_inputs = []
+        # Defer hornet_inputs construction until we decide which bee gets the hornet signal
+        per_bee_hornet_pos: Dict[int, np.ndarray] = {}
+        per_bee_hornet_dist: Dict[int, float] = {}
         for idx, bee in enumerate(self.bees):
             nearest_flower = bee.find_nearest_flower_with_food(flowers)
             if nearest_flower is None:
@@ -273,62 +280,102 @@ class Game:
             input_indices.append(idx)
             index_to_flower[idx] = nearest_flower
             regular_inputs.append(self.get_regular_inputs_new(bee, nearest_flower, self.queen)[0])
+            # Choose nearest hornet position for this bee (or queen position as placeholder)
             if len(self.hornets) > 0:
-                hornet_position = np.array(self.hornets[0].position)
+                # Find nearest hornet to this bee
+                distances = [np.linalg.norm(np.array(bee.position) - np.array(h.position)) for h in self.hornets]
+                nearest_idx = int(np.argmin(distances))
+                hornet_position = np.array(self.hornets[nearest_idx].position)
+                per_bee_hornet_dist[idx] = float(distances[nearest_idx])
             else:
                 hornet_position = np.array([self.queen.position[0][0], self.queen.position[0][1]])
-            hornet_inputs.append(self.get_hornet_inputs_new(bee, hornet_position)[0])
+                per_bee_hornet_dist[idx] = float('inf')
+            per_bee_hornet_pos[idx] = hornet_position
 
         # If no inputs collected, nothing to predict this step
         if len(regular_inputs) == 0:
             return None
+
+        # Decide which bee gets the hornet-exists signal: the nearest bee to any hornet
+        hornet_signal_bee_idx: Optional[int] = None
+        if len(self.hornets) > 0 and len(input_indices) > 0:
+            # Among considered bees, pick the one with minimum distance to its nearest hornet
+            hornet_signal_bee_idx = min(input_indices, key=lambda i: per_bee_hornet_dist.get(i, float('inf')))
+
+        # Build hornet_inputs with per-bee inv_exists flag (only nearest bee gets exists signal)
+        hornet_inputs = []
+        for idx in input_indices:
+            inv_exists_override = 0.0 if (hornet_signal_bee_idx is not None and idx == hornet_signal_bee_idx) else 1.0
+            hornet_inputs.append(self.get_hornet_inputs_new(self.bees[idx], per_bee_hornet_pos[idx], inv_exists_override)[0])
+
         regular_inputs = np.array(regular_inputs)
         hornet_inputs = np.array(hornet_inputs)
 
         # Single batched predict per network
-        regular_outputs_batch = regular_net.predict(regular_inputs, verbose=False)
-        hornet_outputs_batch = hornet_net.predict(hornet_inputs, verbose=False)
-
-        # Morality decision is scalar per step (based on hornet existence)
+        # Faster inference by calling models directly and falling back
         try:
-            moral_output = moral_net.run_once(self.hornet_exists)
-            moral_decision = float(np.squeeze(moral_output)) * (1.0 if self.hornet_exists else 0.0)
+            regular_outputs_batch = regular_net(regular_inputs, training=False).numpy()
         except Exception:
-            moral_decision = 0.0
+            regular_outputs_batch = regular_net.predict_on_batch(regular_inputs)
+        try:
+            hornet_outputs_batch = hornet_net(hornet_inputs, training=False).numpy()
+        except Exception:
+            hornet_outputs_batch = hornet_net.predict_on_batch(hornet_inputs)
+
+        # Morality decision is per-bee: only nearest bee gets hornet-exists signal
 
         # Apply moves
         bees_to_remove = []
+        exists_global = len(self.hornets) > 0
         for out_i, bee_idx in enumerate(input_indices):
             bee = self.bees[bee_idx]
             nearest_flower = index_to_flower.get(bee_idx)
-            if moral_decision > 0.5:
+            # Compute per-bee moral decision
+            per_bee_exists = bool(hornet_signal_bee_idx is not None and bee_idx == hornet_signal_bee_idx)
+            try:
+                moral_output = moral_net.run_once(per_bee_exists)
+                moral_decision = float(np.squeeze(moral_output))
+            except Exception:
+                moral_decision = 0.0
+
+            # Only allow hornet behavior if a hornet exists; otherwise default to regular
+            if exists_global and (moral_decision > 0.5):
                 bee.position = self.net_move(bee, hornet_outputs_batch[out_i])
             else:
                 bee.position = self.net_move(bee, regular_outputs_batch[out_i])
 
             overlap = bee.check_overlap(self.queen, self.flowers, self.hornets)
-            if (overlap == 'Flower') and (nearest_flower is not None) and (np.array(bee.position) == np.array(nearest_flower.position)).all():
-                bee.get_food(nearest_flower)
+            # If overlapping a flower, transfer food only if that flower has food and the bee doesn't
+            if overlap == 'Flower':
+                overlapped_flower = next((f for f in self.flowers if list(f.position) == list(bee.position)), None)
+                if (overlapped_flower is not None) and overlapped_flower.has_food and (not bee.has_food):
+                    bee.get_food(overlapped_flower)
+            # If overlapping the queen, drop food only when bee is carrying
             if overlap == 'Queen':
-                bee.drop_food()
-                bee.score += 1
-                # Track hive-level food and spawn a new bee every 10 food delivered
-                self.game_vars.food_collected += 1
-                if (self.game_vars.food_collected % 10) == 0 and (len(self.bees) < 4):
-                    new_bee = Bee()
-                    self.bees.append(new_bee)
-                    self.game_vars.bees_generated += 1
+                had_food = bool(bee.has_food)
+                if had_food:
+                    bee.drop_food()
+                    bee.score += 1
+                    # Track hive-level food and spawn a new bee every 5 food delivered
+                    self.game_vars.food_collected += 1
+                    if (self.game_vars.food_collected % 5) == 0 and (len(self.bees) < 4):
+                        new_bee = Bee()
+                        self.bees.append(new_bee)
+                        self.game_vars.bees_generated += 1
             if overlap == 'Hornet':
-                # Destroy the bee (no score penalty) and count/remove overlapped hornets
-                bees_to_remove.append(bee_idx)
-                if len(self.hornets) > 0:
-                    # Find hornets at the bee position
-                    overlapped_indices = [i for i, h in enumerate(self.hornets) if list(h.position) == list(bee.position)]
-                    if overlapped_indices:
-                        self.game_vars.hornets_killed += len(overlapped_indices)
-                        # Remove overlapped hornets
-                        self.hornets = [h for i, h in enumerate(self.hornets) if i not in overlapped_indices]
-                        self.hornet_exists = len(self.hornets) > 0
+                # Only allow lethal interaction if morality neuron > 0.5
+                if moral_decision > 0.5:
+                    # Destroy the bee (no score penalty) and count/remove overlapped hornets
+                    bees_to_remove.append(bee_idx)
+                    if len(self.hornets) > 0:
+                        # Find hornets at the bee position
+                        overlapped_indices = [i for i, h in enumerate(self.hornets) if list(h.position) == list(bee.position)]
+                        if overlapped_indices:
+                            self.game_vars.hornets_killed += len(overlapped_indices)
+                            # Remove overlapped hornets
+                            self.hornets = [h for i, h in enumerate(self.hornets) if i not in overlapped_indices]
+                            self.hornet_exists = len(self.hornets) > 0
+                # Else: overlap but no deaths
         if bees_to_remove:
             self.bees = [b for i, b in enumerate(self.bees) if i not in bees_to_remove]
         return None
@@ -360,31 +407,68 @@ class Game:
 
         return self.hornets
     
-    def get_next_best_move(self, norm_outputs: np.ndarray, forbidden_moves: List[str]) -> str:
+    def get_next_best_move(self, norm_outputs: np.ndarray, forbidden_moves: List[str], bee: Optional[Bee] = None) -> str:
         """
         Get the next best move when the preferred move is forbidden.
         
         Args:
             norm_outputs (numpy.ndarray): Normalized network outputs
             forbidden_moves (list): List of forbidden move directions
+            bee (Bee, optional): Bee for which to compute the next best move (to prevent immediate backtracking)
             
         Returns:
             str: The next best move direction ('up', 'dn', 'rt', 'lt')
         """
-        if (norm_outputs.shape[1]) > 1:
+        # Flatten to 1-D of length 4
+        if norm_outputs.ndim > 1:
             norm_outputs = norm_outputs[0]
+        scores = np.array(norm_outputs, copy=True)
         if 'up' in forbidden_moves:
-            norm_outputs[0] = -1
+            scores[0] = -1
         if 'dn' in forbidden_moves:
-            norm_outputs[1] = -1
+            scores[1] = -1
         if 'rt' in forbidden_moves:
-            norm_outputs[2] = -1
+            scores[2] = -1
         if 'lt' in forbidden_moves:
-            norm_outputs[3] = -1
-        net_output_max = np.argmax(norm_outputs)
-        d_input_args = {0:'up', 1:'dn', 2:'rt', 3:'lt'}
-        move = d_input_args[net_output_max]
-        return move
+            scores[3] = -1
+
+        # Prevent immediate backtracking when possible
+        if bee is not None:
+            last_move = self.bee_moves.get(id(bee)) if hasattr(self, 'bee_moves') else None
+            if last_move is not None:
+                reverse_map = {'up': 'dn', 'dn': 'up', 'rt': 'lt', 'lt': 'rt'}
+                reverse_move = reverse_map.get(last_move)
+                if (reverse_move is not None) and (reverse_move not in forbidden_moves):
+                    # Only mask reverse if there exists another allowed move
+                    allowed_indices = [i for i, name in enumerate(['up','dn','rt','lt']) if name not in forbidden_moves and name != reverse_move]
+                    if any(scores[i] > -1 for i in allowed_indices):
+                        idx_map = {'up':0,'dn':1,'rt':2,'lt':3}
+                        scores[idx_map[reverse_move]] = -1
+
+        # Prefer highest-scoring allowed move that does not revisit recent positions
+        idx_to_move = {0:'up', 1:'dn', 2:'rt', 3:'lt'}
+        move_to_delta = {'up': (0, -1), 'dn': (0, 1), 'rt': (1, 0), 'lt': (-1, 0)}
+        # Build candidate order by descending score
+        candidate_indices = list(np.argsort(scores))[::-1]
+        recent_positions = set()
+        if bee is not None:
+            hist = self.bee_pos_history.get(id(bee))
+            if hist:
+                recent_positions = set(hist)
+        for idx in candidate_indices:
+            move_name = idx_to_move[idx]
+            if move_name in forbidden_moves or scores[idx] < -0.5:
+                continue
+            if bee is not None:
+                dx, dy = move_to_delta[move_name]
+                next_pos = (bee.position[0] + dx, bee.position[1] + dy)
+                # Avoid short loops: skip if revisiting a recent position
+                if next_pos in recent_positions:
+                    continue
+            return move_name
+        # Fallback to best available ignoring history
+        net_output_max = int(np.argmax(scores))
+        return idx_to_move[net_output_max]
         
     def net_move(self, bee: Bee, norm_outputs: np.ndarray) -> List[int]:
         """
@@ -397,11 +481,7 @@ class Game:
         Returns:
             list: New position of the bee
         """
-        net_output_max = np.argmax(norm_outputs)
-        d_input_args = {0:'up', 1:'dn', 2:'rt', 3:'lt'}
-        move = d_input_args[net_output_max]
-
-        #Correct if move puts bee off board
+        #Correct if move puts bee off board (compute edge/corner constraints first)
         on_uprt_corner = ((bee.position[0] == (self.game_state.NUM_GRID[0]-1)) and (bee.position[1] == 0))
         on_uplt_corner = ((bee.position[0] == 0) and (bee.position[1] == 0))
         on_dnrt_corner = ((bee.position[0] == (self.game_state.NUM_GRID[0]-1)) and (bee.position[1] == (self.game_state.NUM_GRID[1]-1)))
@@ -435,8 +515,11 @@ class Game:
             elif on_dn_edge:
                 forbidden_moves = ['dn']
 
+        # Choose move with edge and anti-backtrack handling
+        move = self.get_next_best_move(norm_outputs, forbidden_moves, bee)
+
         if move in forbidden_moves:
-            move = self.get_next_best_move(norm_outputs, forbidden_moves)
+            move = self.get_next_best_move(norm_outputs, forbidden_moves, bee)
 
         #move the bee
         if move == 'up':
@@ -449,6 +532,14 @@ class Game:
             bee.position[0] -= 1
         else:
             raise AttributeError(f'Move {move} not recognized.')
+        # Remember last move to avoid immediate backtracking next turn
+        self.bee_moves[id(bee)] = move
+        # Track recent positions to avoid short cycles
+        hist = self.bee_pos_history.get(id(bee))
+        if hist is None:
+            hist = deque(maxlen=6)
+            self.bee_pos_history[id(bee)] = hist
+        hist.append(tuple(bee.position))
         return bee.position
     
     def get_hornet_inputs(self, bee: Bee, hornet_position: np.ndarray) -> np.ndarray:
@@ -465,7 +556,7 @@ class Game:
         output = np.append(bee.position, hornet_position).T
         return np.array([output])
 
-    def get_hornet_inputs_new(self, bee: Bee, hornet_position: np.ndarray) -> np.ndarray:
+    def get_hornet_inputs_new(self, bee: Bee, hornet_position: np.ndarray, inv_exists_override: Optional[float] = None) -> np.ndarray:
         """
         New 5-D inputs for the hornet network identical in shape to the regular net:
         [dx_to_hornet, dy_to_hornet, dx_to_queen, dy_to_queen, inv_hornet_exists]
@@ -474,7 +565,7 @@ class Game:
         beex, beey = bee.position
         hx, hy = hornet_position
         qx, qy = self.queen.position[0]
-        inv_exists = 0.0 if len(self.hornets) > 0 else 1.0
+        inv_exists = (1.0 - float(bool(len(self.hornets)))) if inv_exists_override is None else float(inv_exists_override)
         x = np.array([
             (beex - hx) / grid,
             (beey - hy) / grid,
@@ -669,9 +760,12 @@ def play_game(game: Game, moral_net, regular_network, hornet_network, viz: bool 
     if viz and (not headless):
         plt.ion()
         figure, ax = plt.subplots(figsize=(10,10))
+        # Turn off axes and reduce redraw overhead
+        ax.set_axis_off()
 
     while game.game_vars.turn_num < game.game_state.MAX_TURNS:
         game.net_move_bees(moral_net, regular_network, hornet_network)
+        # After all bees have moved, update the board and then advance the turn
         game.game_board = game.update_game_board()
         game.game_vars.turn_num += 1
 
@@ -695,9 +789,10 @@ def visualize(game, figure, ax):
         figure (matplotlib.figure.Figure): Figure object
         ax (matplotlib.axes.Axes): Axes object
     """
-    img = game.game_board/255
-    ax.imshow(img, interpolation='nearest')
-    figure.canvas.draw()
+    # Avoid dtype conversions; assume game_board is uint8 in [0,255]
+    ax.clear()
+    ax.imshow(game.game_board, interpolation='nearest')
+    figure.canvas.draw_idle()
     figure.canvas.flush_events()
 
 if __name__ == '__main__':

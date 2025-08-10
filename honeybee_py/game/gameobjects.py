@@ -138,7 +138,8 @@ class Queen(GameObject):
         self.name = "Queen"
         self.size = size
         self.position = position
-        self.color = (128,0,128)
+        # Hive (queen) color: light brown
+        self.color = (210, 180, 140)
 
 class Flower(GameObject):
     """
@@ -155,6 +156,7 @@ class Flower(GameObject):
             position (tuple): (x, y) coordinates for the flower's position
         """
         self.name = 'Flower'
+        # Flower color: green; darker when empty (original)
         self.color = (7, 218, 99)
         self.nofood_color = (1,50,32)
         self.has_food = True

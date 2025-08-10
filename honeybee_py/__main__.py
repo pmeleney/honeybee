@@ -6,7 +6,6 @@ from .moral_evolution import (
     Network,
     demo as demo_fn,
     run as evolve_fn,
-    write_se_config,
 )
 
 
@@ -17,9 +16,7 @@ def _chdir_to_package_root():
 
 def cmd_demo(ip: str | None = None, headless: bool = False):
     _chdir_to_package_root()
-    write_se_config()
-    cfg_path = os.path.join('config_files', 'morality_layer_config.json')
-    c = Config(cfg_path)
+    c = Config(config_file='')
     # IP is currently unused by the game logic; accept for future remote modes
     try:
         demo_fn(Network(c), viz=not headless)
@@ -33,9 +30,7 @@ def cmd_demo(ip: str | None = None, headless: bool = False):
 
 def cmd_evolve(ip: str | None = None, headless: bool = True):
     _chdir_to_package_root()
-    write_se_config()
-    cfg_path = os.path.join('config_files', 'morality_layer_config.json')
-    c = Config(cfg_path)
+    c = Config(config_file='')
     # Run headless by default on servers
     try:
         evolve_fn(c, viz=not headless)
@@ -82,7 +77,6 @@ def main():
         cmd_evolve(getattr(args, 'ip', None), getattr(args, 'headless', True))
     elif args.command == 'train-regular':
         _chdir_to_package_root()
-        write_se_config()
         from .train_regular_no_hornets import train_regular_policy  # lazy import
         train_regular_policy(
             epochs=args.epochs,
@@ -93,7 +87,6 @@ def main():
         )
     elif args.command == 'train-hornet':
         _chdir_to_package_root()
-        write_se_config()
         from .train_hornet_confront import train as train_hornet_policy  # lazy import
         train_hornet_policy(
             epochs=args.epochs,

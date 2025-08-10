@@ -7,12 +7,12 @@ class GameState:
     and hornet behavior.
     """
     #Gameplay Vars
-    MAX_TURNS = 124
+    MAX_TURNS = 256
 
     #Gameboard Vars
     GAME_BOARD_SHAPE = 'square'
     if GAME_BOARD_SHAPE == 'square':
-        NUM_GRID = (30,30)
+        NUM_GRID = (20,20)
     else:
         raise AttributeError('GAME_BOARD_SHAPE must be square.')
     
@@ -21,8 +21,8 @@ class GameState:
     QUEEN_SIZE = (2,2)
 
     #Flower Vars
-    NUM_FLOWERS = 256
-    FLOWER_REFRESH_TURNS = 32
+    NUM_FLOWERS = 64
+    FLOWER_REFRESH_TURNS = 64
     BLANK_MOAT = (1,1)
     BLANK_RIM = 2
 
@@ -33,7 +33,7 @@ class GameState:
     HORNETS_EXIST = True
     NUM_STARTING_HORNETS = 0
     HORNET_START_TRUNS = 0
-    HORNET_FREQUENCY = 25
+    HORNET_FREQUENCY = 32
     HORNET_RANDOM_ELE = 1
     
 

@@ -220,29 +220,7 @@ def train_regular_policy(
     model.save(model_path)
     print(f"[train] Saved Keras model to {model_path}")
 
-    # Also export CSV weights/biases to best_weights_and_biases/
-    weights_root = os.path.join(base_dir, 'best_weights_and_biases')
-    os.makedirs(weights_root, exist_ok=True)
-    # Create a run-specific subdirectory with timestamp and short id
-    run_tag = datetime.datetime.now().strftime('%Y%m%d%H%M%S') + '_' + uuid.uuid4().hex[:8]
-    run_dir = os.path.join(weights_root, f'run_{run_tag}')
-    os.makedirs(run_dir, exist_ok=True)
-    # Normalize layer indices to consecutive 0..N-1 for param-bearing layers
-    param_layer_idx = 0
-    for layer in model.layers:
-        params = layer.get_weights()
-        if len(params) == 2:
-            w, b = params
-            weights_path = os.path.join(run_dir, f'Best_weights_model_regular_layer_{param_layer_idx}.csv')
-            biases_path = os.path.join(run_dir, f'Best_biases_model_regular_layer_{param_layer_idx}.csv')
-            np.savetxt(weights_path, w, delimiter=',')
-            np.savetxt(biases_path, b, delimiter=',')
-            print(f"[train] Saved layer {param_layer_idx} weights to {weights_path}")
-            print(f"[train] Saved layer {param_layer_idx} biases to {biases_path}")
-            # And also update root files for backward compatibility
-            np.savetxt(os.path.join(weights_root, f'Best_weights_model_regular_layer_{param_layer_idx}.csv'), w, delimiter=',')
-            np.savetxt(os.path.join(weights_root, f'Best_biases_model_regular_layer_{param_layer_idx}.csv'), b, delimiter=',')
-            param_layer_idx += 1
+    # Note: no CSV export of weights/biases; model is saved as a single Keras file above
 
     return model
 
